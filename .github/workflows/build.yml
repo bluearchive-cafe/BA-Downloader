@@ -4,9 +4,14 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-linux:
-    name: Build
+  build:
+    name: Build ${{ matrix.region }}
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        region: [JP, GL, CN]
 
     steps:
       - name: Checkout code
@@ -19,9 +24,9 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
 
-      - name: Clone JP-BundlesPNG JP branch
+      - name: Clone Bundles repo branch
         run: |
-          git clone --depth 1 --branch JP git@github.com:bluearchive-cafe/BundlesPNG.git output
+          git clone --depth 1 --branch ${{ matrix.region }} git@github.com:bluearchive-cafe/JP-BundlesPNG.git output
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -38,7 +43,7 @@ jobs:
 
       - name: Download info
         run: |
-          curl -sL -o info_jp.json https://raw.githubusercontent.com/bluearchive-cafe/BA-Translation/refs/heads/main/info_jp.json
+          curl -sL -o info_${{ matrix.region }}.json https://raw.githubusercontent.com/bluearchive-cafe/BA-Translation/refs/heads/main/info_${{ matrix.region }}.json
 
       - name: AssetStudio permission
         run: chmod +x AssetStudio/AssetStudioModCLI
@@ -46,45 +51,67 @@ jobs:
       - name: Update bundle
         run: |
           chmod +x update/update_bundle.sh
-          update/update_bundle.sh JP
+          update/update_bundle.sh ${{ matrix.region }}
 
       - name: Run bundle extractor
-        run: python extract.py
+        run: python extract_${{ matrix.region }}.py
 
-      - name: Commit and Push to JP branch
+      - name: Commit and Push
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
 
           cd output
+          git checkout ${{ matrix.region }}
 
-          git checkout JP
+          if [ "${{ matrix.region }}" = "JP" ]; then
+            count=0
+            batch=""
 
-          count=0
-          batch=""
+            for dir in */; do
+              echo "Queue folder: $dir"
+              batch="$batch $dir"
+              count=$((count+1))
 
-          for dir in */; do
-            echo "Queue folder: $dir"
-            batch="$batch $dir"
-            count=$((count+1))
+              if [ $count -eq 3 ]; then
+                git add $batch
+                git diff --cached --quiet || git commit -m "Update JP bundle PNGs batch"
+                git push origin JP || exit 1
+                count=0
+                batch=""
+                git reset
+              fi
+            done
 
-            if [ $count -eq 3 ]; then
-              echo "Committing batch:$batch"
+            if [ -n "$batch" ]; then
               git add $batch
-
-              git diff --cached --quiet || git commit -m "Update JP bundle PNGs batch"
+              git diff --cached --quiet || git commit -m "Update JP bundle PNGs final batch"
               git push origin JP || exit 1
-
-              count=0
-              batch=""
               git reset
             fi
-          done
 
-          if [ -n "$batch" ]; then
-            echo "Committing final batch:$batch"
-            git add $batch
-            git diff --cached --quiet || git commit -m "Update JP bundle PNGs final batch"
-            git push origin JP || exit 1
-            git reset
+          else
+            count=0
+            batch=""
+
+            for file in $(find . -type f -name "*.png"); do
+              batch="$batch $file"
+              count=$((count+1))
+
+              if [ $count -ge 1000 ]; then
+                git add $batch
+                git diff --cached --quiet || git commit -m "Update ${{ matrix.region }} PNG batch"
+                git push origin ${{ matrix.region }} || exit 1
+                count=0
+                batch=""
+                git reset
+              fi
+            done
+
+            if [ -n "$batch" ]; then
+              git add $batch
+              git diff --cached --quiet || git commit -m "Update ${{ matrix.region }} PNG final batch"
+              git push origin ${{ matrix.region }} || exit 1
+              git reset
+            fi
           fi
