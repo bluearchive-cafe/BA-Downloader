@@ -43,7 +43,8 @@ jobs:
 
       - name: Download info
         run: |
-          curl -sL -o info_${{ matrix.region }}.json https://raw.githubusercontent.com/bluearchive-cafe/BA-Translation/refs/heads/main/info_${{ matrix.region }}.json
+          region_lower=$(echo "${{ matrix.region }}" | tr 'A-Z' 'a-z')
+          curl -sL -o info_${region_lower}.json https://raw.githubusercontent.com/bluearchive-cafe/BA-Translation/refs/heads/main/info_${region_lower}.json
 
       - name: AssetStudio permission
         run: chmod +x AssetStudio/AssetStudioModCLI
@@ -69,7 +70,6 @@ jobs:
             batch=""
 
             for dir in */; do
-              echo "Queue folder: $dir"
               batch="$batch $dir"
               count=$((count+1))
 
