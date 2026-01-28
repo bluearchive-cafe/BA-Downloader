@@ -5,6 +5,7 @@ import tempfile
 import subprocess
 import requests
 import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin
 
@@ -15,6 +16,17 @@ ASSET_STUDIO = "./AssetStudio/AssetStudioModCLI"
 MAX_WORKERS = 4
 DOWNLOAD_TIMEOUT = 30
 MAX_RETRIES = 5
+CLEAN_INTERVAL = 500
+
+processed_count = 0
+lock = threading.Lock()
+
+BLOCKED = ["spinecharacters", "spinelobbies", "spinebackground", "materials", "textassets"]
+
+BATCH_DIR = "bundle_batch"
+os.makedirs(BATCH_DIR, exist_ok=True)
+os.makedirs(OUTPUT_REPO, exist_ok=True)
+
 
 def load_addressable_url():
     with open(INFO_PATH, "r", encoding="utf-8") as f:
@@ -22,14 +34,11 @@ def load_addressable_url():
     return data["AddressableCatalogUrl"].rstrip("/") + "/"
 
 
-def bundle_match(name: str) -> bool:
-    name = name.lower()
-    if not name.endswith(".bundle"):
+def bundle_allowed(name: str) -> bool:
+    n = name.lower()
+    if not n.endswith(".bundle"):
         return False
-    if not ("textures" in name or "mx-addressableasset-ui" in name):
-        return False
-    blocked = ["mx-spine", "mx-npcs", "mx-obstacles", "mx-cafe", "mx-characters"]
-    return not any(b in name for b in blocked)
+    return not any(b in n for b in BLOCKED)
 
 
 def collect_target_bundles():
@@ -39,7 +48,8 @@ def collect_target_bundles():
     bundles = []
     for r in data.get("resources", []):
         path = r.get("resource_path", "")
-        if bundle_match(os.path.basename(path)):
+        name = os.path.basename(path)
+        if bundle_allowed(name):
             bundles.append(path)
 
     return sorted(set(bundles))
@@ -57,7 +67,7 @@ def download_file(url, path):
                             f.write(chunk)
 
             if time.time() - start_time > DOWNLOAD_TIMEOUT:
-                raise TimeoutError("Download exceeded limit")
+                raise TimeoutError
 
             return
         except Exception:
@@ -68,29 +78,35 @@ def download_file(url, path):
             time.sleep(2)
 
 
-def process_bundle(base_url, resource_path):
-    url = urljoin(base_url, resource_path)
-    filename = os.path.basename(resource_path)
-    bundle_path = os.path.abspath(filename)
-
-    download_file(url, bundle_path)
-
-    temp_dir = tempfile.mkdtemp(prefix="bundle_")
-    os.makedirs(OUTPUT_REPO, exist_ok=True)
-
+def run_extraction_batch():
+    temp_dir = tempfile.mkdtemp(prefix="batch_")
     try:
-        moved_path = os.path.join(temp_dir, filename)
-        shutil.move(bundle_path, moved_path)
+        for name in os.listdir(BATCH_DIR):
+            src = os.path.join(BATCH_DIR, name)
+            dst = os.path.join(temp_dir, name)
+            shutil.move(src, dst)
 
         subprocess.run(
             [ASSET_STUDIO, temp_dir, "-t", "tex2d", "-o", OUTPUT_REPO, "-g", "type"],
             check=True
         )
-
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        if os.path.exists(bundle_path):
-            os.remove(bundle_path)
+
+
+def process_bundle(base_url, resource_path):
+    global processed_count
+
+    url = urljoin(base_url, resource_path)
+    filename = os.path.basename(resource_path)
+    bundle_path = os.path.join(BATCH_DIR, filename)
+
+    download_file(url, bundle_path)
+
+    with lock:
+        processed_count += 1
+        if processed_count % CLEAN_INTERVAL == 0:
+            run_extraction_batch()
 
 
 def main():
@@ -101,6 +117,9 @@ def main():
         futures = [ex.submit(process_bundle, base_url, b) for b in bundles]
         for f in as_completed(futures):
             f.result()
+
+    if os.listdir(BATCH_DIR):
+        run_extraction_batch()
 
 
 if __name__ == "__main__":

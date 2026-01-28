@@ -6,6 +6,7 @@ import tempfile
 import subprocess
 import requests
 import time
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urljoin
 
@@ -13,7 +14,7 @@ INFO_PATH = "info_jp.json"
 BUNDLE_INFO_PATH = "Android_PatchPack/BundlePackingInfo.json"
 OUTPUT_REPO = "output"
 ASSET_STUDIO = "./AssetStudio/AssetStudioModCLI"
-MAX_WORKERS = 4
+MAX_WORKERS = 3
 DOWNLOAD_TIMEOUT = 30
 MAX_RETRIES = 5
 
@@ -24,14 +25,23 @@ def load_addressable_url():
     return data["AddressableCatalogUrl"].rstrip("/") + "/"
 
 
-def bundle_match(name: str) -> bool:
-    name = name.lower()
-    if not name.endswith(".bundle"):
+def extract_spine_info(name: str):
+    lower = name.lower()
+    m = re.search(r"spinecharacters-([^-/]+)", lower)
+    if m:
+        return "spinecharacters", m.group(1)
+    m = re.search(r"spinelobbies-([^-/]+)", lower)
+    if m:
+        return "spinelobbies", m.group(1)
+    return None, None
+
+
+def is_normal_bundle(name: str) -> bool:
+    lower = name.lower()
+    if not lower.endswith(".bundle"):
         return False
-    if not ("textures" in name or "mx-addressableasset-ui" in name):
-        return False
-    blocked = ["mx-spine", "mx-npcs", "mx-obstacles", "mx-cafe", "mx-characters"]
-    return not any(b in name for b in blocked)
+    blocked = ["spinecharacters", "spinelobbies", "spinebackground", "materials", "textassets"]
+    return not any(b in lower for b in blocked)
 
 
 def collect_target_zips():
@@ -40,28 +50,25 @@ def collect_target_zips():
 
     zips = set()
     for pack in data.get("FullPatchPacks", []):
-        zip_name = pack["PackName"]
         for bf in pack.get("BundleFiles", []):
-            if bundle_match(bf["Name"]):
-                zips.add(zip_name)
+            if bf["Name"].endswith(".bundle"):
+                zips.add(pack["PackName"])
                 break
     return sorted(zips)
 
 
 def download_file(url, path):
     for attempt in range(1, MAX_RETRIES + 1):
-        start_time = time.time()
         try:
+            start = time.time()
             with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT) as r:
                 r.raise_for_status()
                 with open(path, "wb") as f:
                     for chunk in r.iter_content(1024 * 1024):
                         if chunk:
                             f.write(chunk)
-
-            if time.time() - start_time > DOWNLOAD_TIMEOUT:
-                raise TimeoutError("Download exceeded limit")
-
+            if time.time() - start > DOWNLOAD_TIMEOUT:
+                raise TimeoutError
             return
         except Exception:
             if os.path.exists(path):
@@ -71,39 +78,64 @@ def download_file(url, path):
             time.sleep(2)
 
 
-def filter_bundles_only(root_dir):
-    for root, dirs, files in os.walk(root_dir, topdown=False):
-        for f in files:
-            full_path = os.path.join(root, f)
-            if not bundle_match(f):
-                os.remove(full_path)
-        if not os.listdir(root):
-            shutil.rmtree(root, ignore_errors=True)
+def run_assetstudio(input_dir, out_dir, asset_type, group_opt):
+    os.makedirs(out_dir, exist_ok=True)
+    subprocess.run(
+        [ASSET_STUDIO, input_dir, "-t", asset_type, "-o", out_dir, "-g", group_opt],
+        check=True
+    )
 
 
 def process_zip(base_url, zip_name):
     zip_url = urljoin(base_url, f"Android_PatchPack/{zip_name}")
     zip_path = os.path.abspath(zip_name)
-
     download_file(zip_url, zip_path)
 
-    temp_dir = tempfile.mkdtemp(prefix="bundle_")
+    extract_dir = tempfile.mkdtemp(prefix="jp_zip_")
+    normal_dir = tempfile.mkdtemp(prefix="jp_normal_")
     out_dir = os.path.join(OUTPUT_REPO, os.path.splitext(zip_name)[0])
-    os.makedirs(out_dir, exist_ok=True)
 
     try:
         with zipfile.ZipFile(zip_path, 'r') as z:
-            z.extractall(temp_dir)
+            z.extractall(extract_dir)
 
-        filter_bundles_only(temp_dir)
+        for root, _, files in os.walk(extract_dir):
+            for f in files:
+                if not f.endswith(".bundle"):
+                    continue
 
-        subprocess.run(
-            [ASSET_STUDIO, temp_dir, "-t", "tex2d", "-o", out_dir, "-g", "none"],
-            check=True
-        )
+                full_path = os.path.join(root, f)
+                spine_type, char_name = extract_spine_info(f)
+
+                if spine_type:
+                    lower = f.lower()
+                    if "textures" in lower:
+                        temp_dir = tempfile.mkdtemp(prefix="jp_spine_")
+                        shutil.copy(full_path, os.path.join(temp_dir, f))
+                        run_assetstudio(temp_dir,
+                                        os.path.join(spine_type, char_name),
+                                        "tex2d", "type")
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+
+                    elif "textassets" in lower:
+                        temp_dir = tempfile.mkdtemp(prefix="jp_spine_")
+                        shutil.copy(full_path, os.path.join(temp_dir, f))
+                        run_assetstudio(temp_dir,
+                                        os.path.join(spine_type, char_name),
+                                        "textAsset", "type")
+                        shutil.rmtree(temp_dir, ignore_errors=True)
+
+                    continue
+
+                if is_normal_bundle(f):
+                    shutil.copy(full_path, os.path.join(normal_dir, f))
+
+        if os.listdir(normal_dir):
+            run_assetstudio(normal_dir, out_dir, "tex2d", "none")
 
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        shutil.rmtree(normal_dir, ignore_errors=True)
         if os.path.exists(zip_path):
             os.remove(zip_path)
 

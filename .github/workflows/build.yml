@@ -28,6 +28,12 @@ jobs:
         run: |
           git clone --depth 1 --branch ${{ matrix.region }} git@github.com:bluearchive-cafe/BundlesPNG.git output
 
+      - name: Clone JP Spine Repos
+        if: matrix.region == 'JP'
+        run: |
+          git clone --depth 1 git@github.com:bluearchive-cafe/spinecharacters.git spinecharacters
+          git clone --depth 1 git@github.com:bluearchive-cafe/spinelobbies.git spinelobbies
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -73,9 +79,9 @@ jobs:
               batch="$batch $dir"
               count=$((count+1))
 
-              if [ $count -eq 3 ]; then
+              if [ $count -eq 50 ]; then
                 git add $batch
-                git diff --cached --quiet || git commit -m "Update JP bundle PNGs batch"
+                git diff --cached --quiet || git commit -m "Update JP bundle PNGs batch (50 dirs)"
                 git push origin JP || exit 1
                 count=0
                 batch=""
@@ -89,6 +95,16 @@ jobs:
               git push origin JP || exit 1
               git reset
             fi
+
+            cd ..
+
+            for repo in spinecharacters spinelobbies; do
+              cd $repo
+              git add .
+              git diff --cached --quiet || git commit -m "Update JP ${repo} assets"
+              git push origin HEAD || exit 1
+              cd ..
+            done
 
           else
             count=0
