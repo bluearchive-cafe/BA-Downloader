@@ -48,7 +48,7 @@ jobs:
 
       - name: Commit and Push Results
         run: |
-          cd output_repo
+          cd output
           git add .
           git commit -m "Update JP bundle PNGs" || exit 0
           git push
