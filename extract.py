@@ -59,8 +59,7 @@ def download_file(url, path):
                         if chunk:
                             f.write(chunk)
 
-            elapsed = time.time() - start_time
-            if elapsed > DOWNLOAD_TIMEOUT:
+            if time.time() - start_time > DOWNLOAD_TIMEOUT:
                 raise TimeoutError("Download exceeded limit")
 
             return
@@ -70,6 +69,16 @@ def download_file(url, path):
             if attempt == MAX_RETRIES:
                 raise
             time.sleep(2)
+
+
+def filter_bundles_only(root_dir):
+    for root, dirs, files in os.walk(root_dir, topdown=False):
+        for f in files:
+            full_path = os.path.join(root, f)
+            if not bundle_match(f):
+                os.remove(full_path)
+        if not os.listdir(root):
+            shutil.rmtree(root, ignore_errors=True)
 
 
 def process_zip(base_url, zip_name):
@@ -86,6 +95,8 @@ def process_zip(base_url, zip_name):
         with zipfile.ZipFile(zip_path, 'r') as z:
             z.extractall(temp_dir)
 
+        filter_bundles_only(temp_dir)
+
         subprocess.run(
             [ASSET_STUDIO, temp_dir, "-t", "tex2d", "-o", out_dir, "-g", "none"],
             check=True
@@ -93,7 +104,6 @@ def process_zip(base_url, zip_name):
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-
         if os.path.exists(zip_path):
             os.remove(zip_path)
 

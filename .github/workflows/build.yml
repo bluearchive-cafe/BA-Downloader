@@ -19,9 +19,9 @@ jobs:
           chmod 600 ~/.ssh/id_rsa
           ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
 
-      - name: Clone JP-BundlesPNG repo
+      - name: Clone JP-BundlesPNG JP branch
         run: |
-          git clone --depth 1 git@github.com:bluearchive-cafe/JP-BundlesPNG.git output
+          git clone --depth 1 --branch JP git@github.com:bluearchive-cafe/JP-BundlesPNG.git output
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -51,12 +51,14 @@ jobs:
       - name: Run bundle extractor
         run: python extract.py
 
-      - name: Commit and Push
+      - name: Commit and Push to JP branch
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
 
           cd output
+
+          git checkout JP
 
           count=0
           batch=""
@@ -71,7 +73,7 @@ jobs:
               git add $batch
 
               git diff --cached --quiet || git commit -m "Update JP bundle PNGs batch"
-              git push || exit 1
+              git push origin JP || exit 1
 
               count=0
               batch=""
@@ -83,6 +85,6 @@ jobs:
             echo "Committing final batch:$batch"
             git add $batch
             git diff --cached --quiet || git commit -m "Update JP bundle PNGs final batch"
-            git push || exit 1
+            git push origin JP || exit 1
             git reset
           fi
