@@ -51,13 +51,38 @@ jobs:
       - name: Run bundle extractor
         run: python extract.py
 
-      - name: Commit and Push Results
+      - name: Commit and Push
         run: |
           git config --global user.email "actions@github.com"
           git config --global user.name "GitHub Actions"
 
           cd output
-          git add .
-          git commit -m "Update JP bundle PNGs" || exit 0
-          git push
 
+          count=0
+          batch=""
+
+          for dir in */; do
+            echo "Queue folder: $dir"
+            batch="$batch $dir"
+            count=$((count+1))
+
+            if [ $count -eq 3 ]; then
+              echo "Committing batch:$batch"
+              git add $batch
+
+              git diff --cached --quiet || git commit -m "Update JP bundle PNGs batch"
+              git push || exit 1
+
+              count=0
+              batch=""
+              git reset
+            fi
+          done
+
+          if [ -n "$batch" ]; then
+            echo "Committing final batch:$batch"
+            git add $batch
+            git diff --cached --quiet || git commit -m "Update JP bundle PNGs final batch"
+            git push || exit 1
+            git reset
+          fi

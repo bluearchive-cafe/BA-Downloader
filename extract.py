@@ -87,7 +87,7 @@ def process_zip(base_url, zip_name):
             z.extractall(temp_dir)
 
         subprocess.run(
-            [ASSET_STUDIO, temp_dir, "-t", "tex2d", "-o", out_dir, "-g", "type"],
+            [ASSET_STUDIO, temp_dir, "-t", "tex2d", "-o", out_dir, "-g", "none"],
             check=True
         )
 
