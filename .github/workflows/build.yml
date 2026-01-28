@@ -26,7 +26,7 @@ jobs:
 
       - name: Clone Bundles repo branch
         run: |
-          git clone --depth 1 --branch ${{ matrix.region }} git@github.com:bluearchive-cafe/JP-BundlesPNG.git output
+          git clone --depth 1 --branch ${{ matrix.region }} git@github.com:bluearchive-cafe/BundlesPNG.git output
 
       - name: Set up Python
         uses: actions/setup-python@v5
