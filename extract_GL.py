@@ -20,6 +20,7 @@ CLEAN_INTERVAL = 500
 
 processed_count = 0
 lock = threading.Lock()
+extract_lock = threading.Lock()
 
 BLOCKED = ["spinecharacters", "spinelobbies", "spinebackground", "materials", "textassets"]
 
@@ -79,19 +80,24 @@ def download_file(url, path):
 
 
 def run_extraction_batch():
-    temp_dir = tempfile.mkdtemp(prefix="batch_")
-    try:
-        for name in os.listdir(BATCH_DIR):
-            src = os.path.join(BATCH_DIR, name)
-            dst = os.path.join(temp_dir, name)
-            shutil.move(src, dst)
+    with extract_lock:
+        files = os.listdir(BATCH_DIR)
+        if not files:
+            return
 
-        subprocess.run(
-            [ASSET_STUDIO, temp_dir, "-t", "tex2d", "-o", OUTPUT_REPO, "-g", "type"],
-            check=True
-        )
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        temp_dir = tempfile.mkdtemp(prefix="batch_")
+        try:
+            for name in files:
+                src = os.path.join(BATCH_DIR, name)
+                if os.path.exists(src):
+                    shutil.move(src, os.path.join(temp_dir, name))
+
+            subprocess.run(
+                [ASSET_STUDIO, temp_dir, "-t", "tex2d", "-o", OUTPUT_REPO, "-g", "type"],
+                check=True
+            )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def process_bundle(base_url, resource_path):
@@ -103,10 +109,14 @@ def process_bundle(base_url, resource_path):
 
     download_file(url, bundle_path)
 
+    trigger = False
     with lock:
         processed_count += 1
         if processed_count % CLEAN_INTERVAL == 0:
-            run_extraction_batch()
+            trigger = True
+
+    if trigger:
+        run_extraction_batch()
 
 
 def main():
@@ -118,9 +128,9 @@ def main():
         for f in as_completed(futures):
             f.result()
 
-    if os.listdir(BATCH_DIR):
-        run_extraction_batch()
+    run_extraction_batch()
 
 
 if __name__ == "__main__":
     main()
+    

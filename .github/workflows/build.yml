@@ -72,6 +72,7 @@ jobs:
           git checkout ${{ matrix.region }}
 
           if [ "${{ matrix.region }}" = "JP" ]; then
+            shopt -s nullglob
             count=0
             batch=""
 
@@ -85,7 +86,6 @@ jobs:
                 git push origin JP || exit 1
                 count=0
                 batch=""
-                git reset
               fi
             done
 
@@ -93,7 +93,6 @@ jobs:
               git add $batch
               git diff --cached --quiet || git commit -m "Update JP bundle PNGs final batch"
               git push origin JP || exit 1
-              git reset
             fi
 
             cd ..
@@ -102,32 +101,30 @@ jobs:
               cd $repo
               git add .
               git diff --cached --quiet || git commit -m "Update JP ${repo} assets"
-              git push origin HEAD || exit 1
+              branch=$(git rev-parse --abbrev-ref HEAD)
+              git push origin "$branch" || exit 1
               cd ..
             done
 
           else
             count=0
             batch=""
-
-            for file in $(find . -type f -name "*.png"); do
-              batch="$batch $file"
+            while IFS= read -r -d '' file; do
+              batch="$batch \"$file\""
               count=$((count+1))
 
               if [ $count -ge 1000 ]; then
-                git add $batch
+                eval git add $batch
                 git diff --cached --quiet || git commit -m "Update ${{ matrix.region }} PNG batch"
                 git push origin ${{ matrix.region }} || exit 1
                 count=0
                 batch=""
-                git reset
               fi
-            done
+            done < <(find . -type f -name "*.png" -print0)
 
             if [ -n "$batch" ]; then
-              git add $batch
+              eval git add $batch
               git diff --cached --quiet || git commit -m "Update ${{ matrix.region }} PNG final batch"
               git push origin ${{ matrix.region }} || exit 1
-              git reset
             fi
           fi
